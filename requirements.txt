@@ -25,3 +25,7 @@ python-dotenv
 # Machine Learning Utilities
 numpy
 scikit-learn
+
+streamlit
+
+langchain_groq

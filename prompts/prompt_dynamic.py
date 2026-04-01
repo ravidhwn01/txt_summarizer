@@ -3,8 +3,12 @@ from dotenv import load_dotenv
 import streamlit as st
 from langchain_core.prompts import PromptTemplate, load_prompt
 import os
+from pathlib import Path
 
-load_dotenv()
+# Streamlit may change the working directory to the script's folder. Load the
+# repo-root `.env` explicitly so keys resolve regardless of how the app is run.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Initialize Groq model
 # model = ChatGroq(
