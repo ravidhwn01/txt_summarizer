@@ -10,13 +10,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
-# Initialize Groq model
-# model = ChatGroq(
-#     model_name="llama3-70b-8192",
-#     temperature=0.7
-# )
-
-st.header('Research Tool')
+st.header('Ask anything')
 
 if not os.getenv("GROQ_API_KEY"):
     st.error("Missing `GROQ_API_KEY`. Add it to your .env file and restart Streamlit.")
