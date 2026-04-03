@@ -20,8 +20,10 @@ env/
 uploaded_pdfs/
 vector_store/
 chroma_db/
+user_uploads/
 RAG/uploaded_pdfs/
 RAG/vector_store/
 RAG/chroma_db/
+RAG/user_uploads/
 RAG/.env
 SUMMARY.md

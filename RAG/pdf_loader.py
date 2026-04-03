@@ -8,7 +8,7 @@ from typing import List, Optional
 from PyPDF2 import PdfReader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from config import CHUNK_SIZE, CHUNK_OVERLAP, PDF_UPLOAD_FOLDER
+from config import CHUNK_SIZE, CHUNK_OVERLAP, PDF_UPLOAD_FOLDER, USER_UPLOAD_FOLDER
 
 try:
     from PIL import Image
@@ -187,7 +187,7 @@ class PDFLoader:
         print(f"Total chunks: {len(all_documents)}")
         return all_documents
 
-    def load_uploaded_file(self, file_content: bytes, filename: str) -> List[Document]:
+    def load_uploaded_file(self, file_content: bytes, filename: str, folder_path: str = USER_UPLOAD_FOLDER) -> List[Document]:
         """
         Save and load a single uploaded file based on its extension.
 
@@ -198,7 +198,7 @@ class PDFLoader:
         Returns:
             List of Document objects
         """
-        saved_path = self.save_uploaded_file(file_content, filename)
+        saved_path = self.save_uploaded_file(file_content, filename, folder_path=folder_path)
         suffix = Path(saved_path).suffix.lower()
 
         if suffix == ".pdf":
@@ -206,7 +206,7 @@ class PDFLoader:
 
         return self.load_image(saved_path)
 
-    def save_uploaded_file(self, file_content: bytes, filename: str) -> str:
+    def save_uploaded_file(self, file_content: bytes, filename: str, folder_path: str = USER_UPLOAD_FOLDER) -> str:
         """
         Save an uploaded PDF or image file.
 
@@ -217,8 +217,8 @@ class PDFLoader:
         Returns:
             Path to saved file
         """
-        os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
-        file_path = os.path.join(PDF_UPLOAD_FOLDER, filename)
+        os.makedirs(folder_path, exist_ok=True)
+        file_path = os.path.join(folder_path, filename)
 
         with open(file_path, 'wb') as file_handle:
             file_handle.write(file_content)
@@ -226,7 +226,7 @@ class PDFLoader:
         print(f"✓ Saved file: {file_path}")
         return file_path
     
-    def save_uploaded_pdf(self, file_content: bytes, filename: str) -> str:
+    def save_uploaded_pdf(self, file_content: bytes, filename: str, folder_path: str = USER_UPLOAD_FOLDER) -> str:
         """
         Save uploaded PDF file
         
@@ -237,12 +237,13 @@ class PDFLoader:
         Returns:
             Path to saved file
         """
-        file_path = os.path.join(PDF_UPLOAD_FOLDER, filename)
+        os.makedirs(folder_path, exist_ok=True)
+        file_path = os.path.join(folder_path, filename)
         
         # Ensure filename is safe
         if not filename.endswith('.pdf'):
             filename = filename + '.pdf'
-            file_path = os.path.join(PDF_UPLOAD_FOLDER, filename)
+            file_path = os.path.join(folder_path, filename)
         
         with open(file_path, 'wb') as f:
             f.write(file_content)

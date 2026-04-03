@@ -27,6 +27,7 @@ CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", str(RAG_FOLDER / "chroma_db
 
 # PDF Configuration
 PDF_UPLOAD_FOLDER = os.getenv("PDF_UPLOAD_FOLDER", str(RAG_FOLDER / "uploaded_pdfs"))
+USER_UPLOAD_FOLDER = os.getenv("USER_UPLOAD_FOLDER", str(RAG_FOLDER / "user_uploads"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
@@ -41,6 +42,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))
 # Create necessary directories
 try:
     os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(USER_UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(VECTOR_STORE_PATH, exist_ok=True)
     os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 except Exception as e:
