@@ -7,6 +7,8 @@ from pathlib import Path
 from rag_pipeline import RAGPipeline
 from config import PDF_UPLOAD_FOLDER
 
+SUPPORTED_UPLOAD_TYPES = ["pdf", "png", "jpg", "jpeg", "webp", "bmp", "tiff"]
+
 # Page configuration
 st.set_page_config(
     page_title="AI Research Assistant with RAG",
@@ -48,6 +50,35 @@ def main():
         
         # Document Management
         st.subheader("📄 Document Management")
+
+        st.caption("Upload PDFs or images from your computer, or use the existing folder-based workflow below.")
+
+        uploaded_files = st.file_uploader(
+            "Upload PDFs or images",
+            type=SUPPORTED_UPLOAD_TYPES,
+            accept_multiple_files=True,
+            key="rag_file_uploader",
+        )
+
+        upload_mode_col1, upload_mode_col2 = st.columns(2)
+        with upload_mode_col1:
+            upload_reload = st.checkbox("Rebuild index", value=False, key="rebuild_index_checkbox")
+        with upload_mode_col2:
+            st.caption("Images are OCR-processed when possible.")
+
+        if st.button("📥 Upload & Ingest", use_container_width=True, key="upload_and_ingest_btn"):
+            with st.spinner("Uploading and ingesting files..."):
+                success = st.session_state.rag_pipeline.ingest_uploaded_files(
+                    uploaded_files,
+                    reload=upload_reload,
+                )
+                if success:
+                    st.session_state.documents_loaded = True
+                    st.session_state.vector_store_initialized = True
+                    st.success("✓ Uploaded files ingested successfully!")
+                    st.balloons()
+                else:
+                    st.error("✗ Upload ingestion failed. Check file type, PDF validity, or OCR dependencies.")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -89,20 +120,23 @@ def main():
         # PDF Upload Folder
         st.subheader("📁 Upload Folder")
         pdf_files = list(Path(PDF_UPLOAD_FOLDER).glob("*.pdf"))
+        image_files = [path for path in Path(PDF_UPLOAD_FOLDER).iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"}]
         
         # Create folder if it doesn't exist
         os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
         
-        st.info(f"PDFs in folder: {len(pdf_files)}")
+        st.info(f"PDFs in folder: {len(pdf_files)} | Images in folder: {len(image_files)}")
         st.caption(f"Location: {os.path.abspath(PDF_UPLOAD_FOLDER)}")
         
-        if not pdf_files:
-            st.warning("⚠️ No PDFs found! Copy your PDF files to the folder above.")
+        if not pdf_files and not image_files:
+            st.warning("⚠️ No PDFs or images found! Copy your files to the folder above or upload them using the uploader.")
         
-        if pdf_files:
-            with st.expander("View PDF files"):
+        if pdf_files or image_files:
+            with st.expander("View files"):
                 for pdf in pdf_files:
-                    st.text(f"✓ {pdf.name}")
+                    st.text(f"✓ PDF: {pdf.name}")
+                for image_file in image_files:
+                    st.text(f"🖼️ Image: {image_file.name}")
     
     # Main content
     if not st.session_state.documents_loaded:
@@ -112,12 +146,13 @@ def main():
         with col1:
             st.markdown("""
             ### 📋 How to use:
-            1. **Add PDFs**: Copy your research papers to:
+            1. **Upload files**: Use the uploader in the sidebar for PDFs or images
+            2. **Or add PDFs**: Copy your research papers to:
                ```
                RAG/uploaded_pdfs/
                ```
-            2. **Load**: Click '📤 Load PDFs' button
-            3. **Ask**: Query the documents
+            3. **Load**: Click '📤 Load PDFs' or '📥 Upload & Ingest'
+            4. **Ask**: Query the documents
             """)
         
         with col2:
@@ -129,10 +164,12 @@ def main():
             
             ### 📄 Supported Format:
             - PDF files (.pdf)
+            - Images (.png, .jpg, .jpeg, .webp, .bmp, .tiff)
             
             ### 💡 Example files:
             - research_paper.pdf
             - document.pdf
+            - screenshot.png
             - whitepaper.pdf
             """)
     else:

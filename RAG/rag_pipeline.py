@@ -3,6 +3,7 @@ Main RAG Pipeline
 Orchestrates the complete RAG workflow: PDF loading -> embedding -> retrieval -> LLM generation
 """
 import os
+from pathlib import Path
 from typing import List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
@@ -110,6 +111,59 @@ ANSWER:"""
             self.vector_store.add_documents(documents)
         
         print("\n✓ Document ingestion complete\n")
+        return True
+
+    def ingest_uploaded_files(self, uploaded_files, reload: bool = False) -> bool:
+        """
+        Ingest user-uploaded PDFs and images into the vector store.
+
+        Args:
+            uploaded_files: Iterable of uploaded file objects from Streamlit
+            reload: Whether to rebuild the vector store from scratch
+
+        Returns:
+            True if successful
+        """
+        print("\n" + "=" * 60)
+        print("UPLOADED FILE INGESTION")
+        print("=" * 60)
+
+        if not uploaded_files:
+            print("✗ No files were uploaded")
+            return False
+
+        os.makedirs(PDF_UPLOAD_FOLDER, exist_ok=True)
+
+        documents = []
+        supported_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"}
+
+        for uploaded_file in uploaded_files:
+            suffix = Path(uploaded_file.name).suffix.lower()
+            if suffix not in supported_extensions:
+                print(f"⚠ Skipping unsupported file type: {uploaded_file.name}")
+                continue
+
+            try:
+                file_content = uploaded_file.getvalue()
+                loaded_documents = self.pdf_loader.load_uploaded_file(file_content, uploaded_file.name)
+                documents.extend(loaded_documents)
+            except Exception as e:
+                print(f"✗ Error processing uploaded file {uploaded_file.name}: {str(e)}")
+
+        if not documents:
+            print("✗ No documents were extracted from uploaded files")
+            return False
+
+        if reload or not self._vector_store_exists():
+            self.vector_store.create_vector_store(documents)
+        else:
+            if not self.vector_store.load_vector_store():
+                print("⚠ Could not load existing vector store; creating a new one")
+                self.vector_store.create_vector_store(documents)
+            else:
+                self.vector_store.add_documents(documents)
+
+        print("\n✓ Uploaded file ingestion complete\n")
         return True
     
     def query(self, question: str, top_k: Optional[int] = None) -> str:

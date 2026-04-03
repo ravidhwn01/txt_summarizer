@@ -34,6 +34,10 @@ langchain_groq
 # PDF Processing
 PyPDF2
 
+# Image Processing and OCR
+pillow
+pytesseract
+
 # Vector Stores
 faiss-cpu
 chromadb
