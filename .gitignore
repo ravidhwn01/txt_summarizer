@@ -15,3 +15,13 @@ env/
 .ipynb_checkpoints/
 # Ignore  the .env file that may contain sensitive information
 .env
+
+# Ignore generated RAG artifacts and local data
+uploaded_pdfs/
+vector_store/
+chroma_db/
+RAG/uploaded_pdfs/
+RAG/vector_store/
+RAG/chroma_db/
+RAG/.env
+SUMMARY.md

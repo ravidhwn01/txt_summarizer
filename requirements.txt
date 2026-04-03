@@ -29,3 +29,17 @@ scikit-learn
 streamlit
 
 langchain_groq
+
+# RAG System Dependencies
+# PDF Processing
+PyPDF2
+
+# Vector Stores
+faiss-cpu
+chromadb
+
+# LangChain Community (Vector Store Integrations)
+langchain-community
+
+# Document Processing
+langchain-text-splitters
