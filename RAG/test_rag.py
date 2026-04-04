@@ -37,6 +37,7 @@ def demo_rag_pipeline():
         "What is the main topic discussed in the documents?",
         "Summarize the key findings.",
         "What methodology was used?",
+        "Can you expand on that methodology?",
         "What are the limitations?"
     ]
     

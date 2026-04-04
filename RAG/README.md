@@ -7,9 +7,12 @@ A complete Retrieval Augmented Generation (RAG) system for building intelligent 
 - **📄 PDF Processing**: Upload and automatically process research papers
 - **🔍 Smart Retrieval**: Use FAISS or Chroma vector databases for fast document retrieval
 - **🧠 Intelligent Answers**: Leverage Groq LLM with retrieved context for accurate responses
+- **🧠 Conversation Memory**: Remember recent turns so follow-up questions stay in context
+- **🖼️ Image Summaries**: Use OCR or a vision model to describe uploaded screenshots and photos
 - **⚡ Fast & Scalable**: Efficient chunking and embedding strategies
 - **🎨 Web Interface**: Streamlit app for easy interaction
 - **🔄 Reload & Update**: Add new documents dynamically to the knowledge base
+
 
 ## 🏗️ Architecture
 
@@ -34,8 +37,8 @@ A complete Retrieval Augmented Generation (RAG) system for building intelligent 
 └────────────────────────────┬────────────────────────────────┘
                              ↓
 ┌─────────────────────────────────────────────────────────────┐
-│      LLM with Retrieved Context (Groq - Mixtral)            │
-│           (Answer Generation from Context)                  │
+│   LLM with Retrieved Context + Conversation Memory          │
+│      (Answer Generation from Context + Chat History)        │
 └────────────────────────────┬────────────────────────────────┘
                              ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -84,10 +87,15 @@ VECTOR_STORE_TYPE=faiss
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 TOP_K=3
+CONVERSATION_MEMORY_TURNS=6
 
 # LLM Settings
 LLM_TEMPERATURE=0.7
 MAX_TOKENS=1000
+
+# Optional vision model for image summarization
+GOOGLE_API_KEY=your_google_api_key_here
+VISION_MODEL=gemini-1.5-flash
 ```
 
 ### 3. Add PDF Documents
@@ -118,11 +126,6 @@ python test_rag.py batch
 
 ### 1. **config.py** - Configuration Management
 Centralized configuration for all RAG components:
-- Embedding model selection
-- Vector store type (FAISS/Chroma)
-- Chunk size and overlap settings
-- LLM parameters
-- Retrieval settings
 
 ```python
 from RAG.config import EMBEDDING_MODEL, LLM_MODEL, TOP_K
@@ -206,10 +209,27 @@ streamlit run RAG/rag_app.py
 
 **Features:**
 - PDF upload and management
-- Interactive Q&A interface
+- Interactive chat interface with conversation memory
 - Document retrieval visualization
 - Pipeline statistics
 - Example queries
+
+### 7. **Conversation Memory** - Follow-up Question Support
+The assistant stores recent question-and-answer turns and uses them when a follow-up depends on prior context.
+
+This helps with prompts like:
+- "What about the limitations?"
+- "Can you explain that methodology further?"
+- "How does that compare to the earlier result?"
+
+Use the sidebar button to clear the conversation memory when you want to start fresh.
+
+### 8. **Image Summaries** - OCR or Vision-Based Descriptions
+Images are now processed in two ways:
+- Local OCR extracts text when Tesseract is installed.
+- If a `GOOGLE_API_KEY` is configured, the app can use a vision model to describe screenshots and photos even when OCR is unavailable.
+
+If neither is available, the app keeps a fallback record of the image but cannot infer its content.
 
 ## 💻 Usage Examples
 
@@ -302,27 +322,15 @@ CHUNK_OVERLAP=400      # More overlap for continuity
 ## 🐛 Troubleshooting
 
 ### Issue: "No documents found"
-- **Solution**: Ensure PDFs are in `uploaded_pdfs/` folder and run reload
 
 ### Issue: FAISS index errors
-- **Solution**: Delete `vector_store/` folder and recreate index
 
 ### Issue: Memory issues with large PDFs
-- **Solution**: Reduce `CHUNK_SIZE` or use Chroma (more memory efficient)
 
 ### Issue: Poor answer quality
-- **Solution**: Increase `TOP_K`, adjust `CHUNK_OVERLAP`, or use temperature 0.5
 
 ## 📈 Roadmap
 
-- [ ] Multi-language support
-- [ ] Citation tracking
-- [ ] Hybrid search (semantic + keyword)
-- [ ] Answer ranking and confidence scores
-- [ ] Document summarization
-- [ ] Web scraping for documents
-- [ ] Fine-tuned retrieval models
-- [ ] Query expansion and reformulation
 
 ## 📝 License
 
@@ -336,6 +344,5 @@ Contributions welcome! Please feel free to submit pull requests.
 
 For issues and questions, please contact the development team.
 
----
 
 **Built with ❤️ using LangChain, Groq, and HuggingFace**

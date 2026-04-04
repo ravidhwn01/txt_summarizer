@@ -2,13 +2,25 @@
 PDF Loader and Document Processing
 Handles uploading, loading, and chunking PDF documents
 """
+import base64
+import importlib
 import os
+import mimetypes
+import shutil
 from pathlib import Path
 from typing import List, Optional
 from PyPDF2 import PdfReader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from config import CHUNK_SIZE, CHUNK_OVERLAP, PDF_UPLOAD_FOLDER, USER_UPLOAD_FOLDER
+from config import (
+    CHUNK_SIZE,
+    CHUNK_OVERLAP,
+    PDF_UPLOAD_FOLDER,
+    USER_UPLOAD_FOLDER,
+    GOOGLE_API_KEY,
+    VISION_MODEL,
+    IMAGE_CAPTION_MODEL,
+)
 
 try:
     from PIL import Image
@@ -16,9 +28,21 @@ except ImportError:  # pragma: no cover - optional dependency
     Image = None
 
 try:
-    import pytesseract
+    pytesseract = importlib.import_module("pytesseract")
 except ImportError:  # pragma: no cover - optional dependency
     pytesseract = None
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage
+except ImportError:  # pragma: no cover - optional dependency
+    ChatGoogleGenerativeAI = None
+    HumanMessage = None
+
+try:
+    from transformers import pipeline
+except ImportError:  # pragma: no cover - optional dependency
+    pipeline = None
 
 
 class PDFLoader:
@@ -40,6 +64,28 @@ class PDFLoader:
             separators=["\n\n", "\n", " ", ""]
         )
         self.documents = []
+        self.vision_model = None
+        self.image_captioner = None
+        self.tesseract_path = shutil.which("tesseract")
+
+        if GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
+            try:
+                self.vision_model = ChatGoogleGenerativeAI(
+                    model=VISION_MODEL,
+                    google_api_key=GOOGLE_API_KEY,
+                    temperature=0.2,
+                )
+            except Exception as e:
+                print(f"⚠ Vision model unavailable: {str(e)}")
+
+        if pipeline is not None:
+            try:
+                self.image_captioner = pipeline(
+                    task="image-to-text",
+                    model=IMAGE_CAPTION_MODEL,
+                )
+            except Exception as e:
+                print(f"⚠ Local image captioner unavailable: {str(e)}")
     
     def load_pdf(self, file_path: str) -> List[Document]:
         """
@@ -80,7 +126,7 @@ class PDFLoader:
 
     def load_image(self, file_path: str) -> List[Document]:
         """
-        Load and OCR text from an image file.
+        Load and summarize text from an image file.
 
         Args:
             file_path: Path to the image file
@@ -88,33 +134,138 @@ class PDFLoader:
         Returns:
             List of Document objects
         """
-        if Image is None or pytesseract is None:
-            print(f"⚠ OCR dependencies are missing; cannot process image {file_path}")
-            return []
+        image_summary = self._describe_image(file_path)
 
-        try:
-            image = Image.open(file_path)
-            extracted_text = pytesseract.image_to_string(image)
-            extracted_text = extracted_text.strip()
-
-            if not extracted_text:
-                print(f"⚠ No text detected in image {file_path}")
-                return []
-
+        if image_summary:
             metadata = {
                 "source": file_path,
                 "filename": os.path.basename(file_path),
                 "file_type": "image",
+                "analysis_method": image_summary["method"],
             }
-            document = Document(page_content=extracted_text, metadata=metadata)
+            document = Document(page_content=image_summary["text"], metadata=metadata)
             chunks = self.text_splitter.split_documents([document])
 
-            print(f"✓ Loaded image {file_path}: {len(chunks)} chunks")
+            print(f"✓ Loaded image {file_path}: {len(chunks)} chunks via {image_summary['method']}")
             return chunks
 
+        print(f"⚠ Image summarization unavailable for {file_path}; storing fallback text instead")
+        return [self._create_image_fallback_document(file_path, self._image_summary_failure_reason())]
+
+    def _describe_image(self, file_path: str) -> Optional[dict]:
+        """Use OCR, a vision API, or a local captioner to produce text for an image."""
+        if Image is None:
+            return None
+
+        try:
+            image = Image.open(file_path)
         except Exception as e:
-            print(f"✗ Error loading image {file_path}: {str(e)}")
-            return []
+            print(f"⚠ Could not open image {file_path}: {str(e)}")
+            return None
+
+        # Prefer real image understanding backends first.
+        if self.vision_model is not None and HumanMessage is not None:
+            try:
+                mime_type = mimetypes.guess_type(file_path)[0] or "image/png"
+                with open(file_path, "rb") as file_handle:
+                    encoded_image = base64.b64encode(file_handle.read()).decode("utf-8")
+
+                prompt = (
+                    "Describe this image for a knowledge base. "
+                    "If it contains visible text, extract the key text first. "
+                    "Then summarize the image content in 3-6 concise sentences."
+                )
+                response = self.vision_model.invoke([
+                    HumanMessage(content=[
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{encoded_image}"
+                            },
+                        },
+                    ])
+                ])
+                summary_text = getattr(response, "content", "").strip()
+                if summary_text:
+                    return {
+                        "text": summary_text,
+                        "method": "vision",
+                    }
+            except Exception as e:
+                print(f"⚠ Vision model failed for {file_path}: {str(e)}")
+
+        if self.image_captioner is not None:
+            try:
+                caption_result = self.image_captioner(image)
+                if caption_result:
+                    if isinstance(caption_result, list):
+                        caption_text = caption_result[0].get("generated_text", "").strip()
+                    elif isinstance(caption_result, dict):
+                        caption_text = caption_result.get("generated_text", "").strip()
+                    else:
+                        caption_text = str(caption_result).strip()
+
+                    if caption_text:
+                        return {
+                            "text": f"Image summary for {os.path.basename(file_path)}: {caption_text}",
+                            "method": "local_captioning",
+                        }
+            except Exception as e:
+                print(f"⚠ Local image captioning failed for {file_path}: {str(e)}")
+
+        # Fall back to OCR only if Tesseract is actually installed.
+        if pytesseract is not None and self.tesseract_path:
+            try:
+                extracted_text = pytesseract.image_to_string(image).strip()
+                if extracted_text:
+                    return {
+                        "text": extracted_text,
+                        "method": "ocr",
+                    }
+            except Exception as e:
+                print(f"⚠ OCR failed for {file_path}: {str(e)}")
+
+        return None
+
+    def _image_summary_failure_reason(self) -> str:
+        """Explain why image summarization could not run."""
+        missing_backends = []
+
+        if pytesseract is None:
+            missing_backends.append("pytesseract")
+        if not self.tesseract_path:
+            missing_backends.append("tesseract_executable")
+        if self.vision_model is None:
+            missing_backends.append("vision_api")
+        if self.image_captioner is None:
+            missing_backends.append("local_captioner")
+
+        if not missing_backends:
+            return "Image summarization failed unexpectedly"
+
+        return (
+            "No image summarization backend is available (missing: "
+            + ", ".join(missing_backends)
+            + "). Install OCR or local captioning dependencies, or configure the vision API."
+        )
+
+    def _create_image_fallback_document(self, file_path: str, reason: str) -> Document:
+        """Create a lightweight fallback document when image summarization is unavailable."""
+        return Document(
+            page_content=(
+                f"Image uploaded: {os.path.basename(file_path)}\n"
+                f"Image summarization was unavailable. Reason: {reason}.\n"
+                "This image is stored in the knowledge base, but it does not contain extracted text or a generated summary."
+            ),
+            metadata={
+                "source": file_path,
+                "filename": os.path.basename(file_path),
+                "file_type": "image",
+                "analysis_method": "fallback",
+                "fallback_reason": reason,
+            },
+        )
     
     def load_multiple_pdfs(self, folder_path: str = PDF_UPLOAD_FOLDER) -> List[Document]:
         """

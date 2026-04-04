@@ -34,8 +34,12 @@ st.markdown("""
 # Initialize session state
 if 'rag_pipeline' not in st.session_state:
     st.session_state.rag_pipeline = RAGPipeline()
+if 'documents_loaded' not in st.session_state:
     st.session_state.documents_loaded = False
+if 'vector_store_initialized' not in st.session_state:
     st.session_state.vector_store_initialized = False
+if 'chat_messages' not in st.session_state:
+    st.session_state.chat_messages = []
 
 def main():
     st.title("🤖 AI Research Assistant with RAG")
@@ -82,8 +86,8 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📤 Load PDFs", use_container_width=True, key="load_pdfs"):
-                with st.spinner("Loading documents..."):
+            if st.button("📤 Load Files", use_container_width=True, key="load_pdfs"):
+                with st.spinner("Loading documents and images..."):
                     success = st.session_state.rag_pipeline.ingest_documents(reload=False)
                     if success:
                         st.session_state.documents_loaded = True
@@ -91,11 +95,11 @@ def main():
                         st.success("✓ Documents loaded successfully!")
                         st.balloons()
                     else:
-                        st.error("✗ No PDFs found - please check the uploaded_pdfs folder")
+                        st.error("✗ No PDF or image files found - please check the uploaded_pdfs folder")
         
         with col2:
-            if st.button("🔄 Reload PDFs", use_container_width=True, key="reload_pdfs"):
-                with st.spinner("Reloading documents..."):
+            if st.button("🔄 Reload Files", use_container_width=True, key="reload_pdfs"):
+                with st.spinner("Reloading documents and images..."):
                     success = st.session_state.rag_pipeline.ingest_documents(reload=True)
                     if success:
                         st.session_state.documents_loaded = True
@@ -103,7 +107,16 @@ def main():
                         st.success("✓ Documents reloaded!")
                         st.balloons()
                     else:
-                        st.error("✗ Failed to reload documents")
+                        st.error("✗ Failed to reload documents or images")
+
+        st.subheader("🧠 Conversation Memory")
+        st.caption("Recent turns are kept so follow-up questions can reuse prior context.")
+        st.metric("Stored turns", len(st.session_state.rag_pipeline.get_conversation_history()))
+        if st.button("🧹 Clear Conversation", use_container_width=True, key="clear_memory_btn"):
+            st.session_state.rag_pipeline.clear_conversation_memory()
+            st.session_state.chat_messages = []
+            st.success("Conversation memory cleared")
+            st.rerun()
         
         # Display statistics
         st.subheader("📊 Statistics")
@@ -178,86 +191,91 @@ def main():
         
         # Show status
         st.info(f"📚 Vector store status: {'✓ Ready' if st.session_state.vector_store_initialized else '⚠ Not ready'}")
-        
-        question = st.text_area(
-            "Enter your question:",
-            height=100,
-            placeholder="e.g., What are the main findings of this research?"
-        )
-        
+
+        if not st.session_state.chat_messages:
+            st.caption("Start a conversation. Follow-up questions will reuse the recent turns above.")
+
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        question = st.chat_input("Ask about the uploaded documents...")
+
+        if question:
+            st.session_state.chat_messages.append({"role": "user", "content": question})
+            with st.chat_message("user"):
+                st.markdown(question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking with conversation memory..."):
+                    try:
+                        answer = st.session_state.rag_pipeline.query(question)
+                        st.markdown(answer)
+                        st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+
+                        with st.expander("📚 Show Retrieved Documents", expanded=True):
+                            memory_aware_query = st.session_state.rag_pipeline._build_memory_aware_query(question)
+                            retrieved_docs = st.session_state.rag_pipeline.retriever.retrieve(memory_aware_query)
+                            retrieved_docs = st.session_state.rag_pipeline._rehydrate_image_documents(retrieved_docs)
+                            if retrieved_docs:
+                                st.success(f"✓ Found {len(retrieved_docs)} relevant document(s)")
+                                for i, doc in enumerate(retrieved_docs, 1):
+                                    with st.expander(f"📄 Document {i} - {doc.metadata.get('filename', 'Unknown')}"):
+                                        content = doc.page_content[:800]
+                                        if len(doc.page_content) > 800:
+                                            content += "\n\n... [truncated]"
+                                        st.text(content)
+                            else:
+                                st.warning("No documents retrieved")
+                    except Exception as e:
+                        error_message = f"Error processing query: {str(e)}"
+                        st.error(error_message)
+                        st.session_state.chat_messages.append({"role": "assistant", "content": error_message})
+
         col1, col2, col3 = st.columns([2, 1, 1])
-        
+
         with col1:
-            if st.button("🔍 Search", use_container_width=True, key="search_btn"):
-                if question.strip():
-                    with st.spinner("Processing your question..."):
-                        try:
-                            answer = st.session_state.rag_pipeline.query(question)
-                            st.subheader("📋 Answer")
-                            st.markdown(answer)
-                            
-                            # Always show retrieved documents
-                            with st.expander("📚 Show Retrieved Documents", expanded=True):
-                                retrieved_docs = st.session_state.rag_pipeline.retriever.retrieve(question)
-                                if retrieved_docs:
-                                    st.success(f"✓ Found {len(retrieved_docs)} relevant document(s)")
-                                    for i, doc in enumerate(retrieved_docs, 1):
-                                        with st.expander(f"📄 Document {i} - {doc.metadata.get('filename', 'Unknown')}"):
-                                            content = doc.page_content[:800]
-                                            if len(doc.page_content) > 800:
-                                                content += "\n\n... [truncated]"
-                                            st.text(content)
-                                else:
-                                    st.warning("No documents retrieved")
-                        except Exception as e:
-                            st.error(f"Error processing query: {str(e)}")
-                else:
-                    st.warning("Please enter a question")
-        
-        with col2:
             if st.button("📊 Stats", use_container_width=True, key="stats_btn"):
                 try:
                     st.session_state.rag_pipeline.print_statistics()
                     st.success("Statistics printed to console")
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
-        
-        with col3:
+
+        with col2:
             if st.button("🔄 Reinit", use_container_width=True, key="reinit_btn"):
                 st.session_state.documents_loaded = False
                 st.session_state.vector_store_initialized = False
+                st.session_state.chat_messages = []
+                st.session_state.rag_pipeline.clear_conversation_memory()
                 st.rerun()
-        
-        # Example queries
+
+        with col3:
+            if st.button("🧾 Show Memory", use_container_width=True, key="show_memory_btn"):
+                history = st.session_state.rag_pipeline.get_conversation_history()
+                if history:
+                    st.json(history)
+                else:
+                    st.info("No conversation memory stored yet")
+
         st.subheader("💡 Example Queries")
-        st.caption("Click any example to try it:")
+        st.caption("Use these as starting points for a conversation:")
         
         examples = [
             "What are the main conclusions of this research?",
-            "Summarize the methodology used in this paper",
+            "Can you explain the methodology in more detail?",
             "What datasets were used in this study?",
             "What are the limitations of this research?"
         ]
-        
+
+        example_cols = st.columns(2)
         for idx, example in enumerate(examples):
-            if st.button(f"Try: {example}", use_container_width=True, key=f"example_{idx}"):
-                with st.spinner("Processing..."):
-                    try:
-                        answer = st.session_state.rag_pipeline.query(example)
-                        st.subheader("📋 Answer")
-                        st.markdown(answer)
-                        
-                        with st.expander("📚 Retrieved Documents"):
-                            retrieved_docs = st.session_state.rag_pipeline.retriever.retrieve(example)
-                            if retrieved_docs:
-                                st.success(f"✓ Found {len(retrieved_docs)} document(s)")
-                                for i, doc in enumerate(retrieved_docs, 1):
-                                    st.text(f"**Doc {i}: {doc.metadata.get('filename', 'Unknown')}**")
-                                    st.text(doc.page_content[:400] + "...")
-                            else:
-                                st.warning("No documents found")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
+            with example_cols[idx % 2]:
+                if st.button(example, key=f"example_{idx}", use_container_width=True):
+                    st.session_state.chat_messages.append({"role": "user", "content": example})
+                    answer = st.session_state.rag_pipeline.query(example)
+                    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
