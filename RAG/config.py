@@ -23,6 +23,7 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 VISION_MODEL = os.getenv("VISION_MODEL", "gemini-1.5-flash")
 IMAGE_CAPTION_MODEL = os.getenv("IMAGE_CAPTION_MODEL", "Salesforce/blip-image-captioning-base")
+ENABLE_LOCAL_IMAGE_CAPTIONING = os.getenv("ENABLE_LOCAL_IMAGE_CAPTIONING", "false").lower() in {"1", "true", "yes", "on"}
 
 # Backward compatibility for older environment files
 if LLM_MODEL == "mixtral-8x7b-32768":

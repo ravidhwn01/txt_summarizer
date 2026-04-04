@@ -20,6 +20,7 @@ from config import (
     GOOGLE_API_KEY,
     VISION_MODEL,
     IMAGE_CAPTION_MODEL,
+    ENABLE_LOCAL_IMAGE_CAPTIONING,
 )
 
 try:
@@ -40,9 +41,17 @@ except ImportError:  # pragma: no cover - optional dependency
     HumanMessage = None
 
 try:
-    from transformers import pipeline
+    import torch
+    from transformers import BlipForConditionalGeneration, BlipProcessor
 except ImportError:  # pragma: no cover - optional dependency
-    pipeline = None
+    torch = None
+    BlipForConditionalGeneration = None
+    BlipProcessor = None
+
+try:
+    import easyocr
+except ImportError:  # pragma: no cover - optional dependency
+    easyocr = None
 
 
 class PDFLoader:
@@ -64,29 +73,15 @@ class PDFLoader:
             separators=["\n\n", "\n", " ", ""]
         )
         self.documents = []
-        self.vision_model = None
-        self.image_captioner = None
+        self.vision_model_cache = {}
+        self.image_caption_processor = None
+        self.image_caption_model = None
+        self.easyocr_reader = None
+        self.enable_local_image_captioning = ENABLE_LOCAL_IMAGE_CAPTIONING
         self.tesseract_path = shutil.which("tesseract")
 
-        if GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
-            try:
-                self.vision_model = ChatGoogleGenerativeAI(
-                    model=VISION_MODEL,
-                    google_api_key=GOOGLE_API_KEY,
-                    temperature=0.2,
-                )
-            except Exception as e:
-                print(f"⚠ Vision model unavailable: {str(e)}")
+        self.vision_model_candidates = self._build_vision_model_candidates()
 
-        if pipeline is not None:
-            try:
-                self.image_captioner = pipeline(
-                    task="image-to-text",
-                    model=IMAGE_CAPTION_MODEL,
-                )
-            except Exception as e:
-                print(f"⚠ Local image captioner unavailable: {str(e)}")
-    
     def load_pdf(self, file_path: str) -> List[Document]:
         """
         Load and extract text from a PDF file
@@ -163,19 +158,131 @@ class PDFLoader:
             print(f"⚠ Could not open image {file_path}: {str(e)}")
             return None
 
-        # Prefer real image understanding backends first.
-        if self.vision_model is not None and HumanMessage is not None:
-            try:
-                mime_type = mimetypes.guess_type(file_path)[0] or "image/png"
-                with open(file_path, "rb") as file_handle:
-                    encoded_image = base64.b64encode(file_handle.read()).decode("utf-8")
+        # Prefer OCR-like extraction first so screenshots with visible text are handled locally.
+        ocr_text = self._extract_text_from_image(image, file_path)
+        if ocr_text:
+            return {
+                "text": ocr_text,
+                "method": "ocr",
+            }
 
-                prompt = (
-                    "Describe this image for a knowledge base. "
-                    "If it contains visible text, extract the key text first. "
-                    "Then summarize the image content in 3-6 concise sentences."
+        # Fall back to vision or captioning when OCR does not find usable text.
+        vision_summary = self._describe_with_vision(file_path, image)
+        if vision_summary:
+            return vision_summary
+
+        caption_text = self._caption_image_locally(image, file_path)
+        if caption_text:
+            return {
+                "text": f"Image summary for {os.path.basename(file_path)}: {caption_text}",
+                "method": "local_captioning",
+            }
+
+        return None
+
+    def _extract_text_from_image(self, image, file_path: str) -> Optional[str]:
+        """Extract text using Tesseract when available, otherwise EasyOCR."""
+        if pytesseract is not None and self.tesseract_path:
+            try:
+                extracted_text = pytesseract.image_to_string(image).strip()
+                if extracted_text:
+                    return extracted_text
+            except Exception as e:
+                print(f"⚠ OCR failed for {file_path}: {str(e)}")
+
+        if easyocr is not None:
+            try:
+                if self.easyocr_reader is None:
+                    self.easyocr_reader = easyocr.Reader(["en"], gpu=False)
+
+                result = self.easyocr_reader.readtext(file_path, detail=0, paragraph=True)
+                extracted_text = " ".join(part.strip() for part in result if part and part.strip()).strip()
+                if extracted_text:
+                    return extracted_text
+            except Exception as e:
+                print(f"⚠ EasyOCR failed for {file_path}: {str(e)}")
+
+        return None
+
+    def _caption_image_locally(self, image, file_path: str) -> Optional[str]:
+        """Generate a caption using a local BLIP model when available."""
+        if not self.enable_local_image_captioning:
+            return None
+
+        if torch is None or BlipProcessor is None or BlipForConditionalGeneration is None:
+            return None
+
+        try:
+            if self.image_caption_processor is None or self.image_caption_model is None:
+                self.image_caption_processor = BlipProcessor.from_pretrained(IMAGE_CAPTION_MODEL)
+                self.image_caption_model = BlipForConditionalGeneration.from_pretrained(IMAGE_CAPTION_MODEL)
+                self.image_caption_model.eval()
+
+            inputs = self.image_caption_processor(images=image, return_tensors="pt")
+            with torch.no_grad():
+                generated_tokens = self.image_caption_model.generate(**inputs, max_new_tokens=30)
+
+            caption = self.image_caption_processor.decode(generated_tokens[0], skip_special_tokens=True).strip()
+            return caption or None
+        except Exception as e:
+            print(f"⚠ Local image captioning failed for {file_path}: {str(e)}")
+            return None
+
+    def _build_vision_model_candidates(self) -> List[str]:
+        """Build a prioritized, de-duplicated list of vision model names."""
+        candidates = [VISION_MODEL, "gemini-2.0-flash", "gemini-1.5-flash-latest"]
+        seen = set()
+        unique_candidates = []
+
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                unique_candidates.append(candidate)
+
+        return unique_candidates
+
+    def _get_vision_model(self, model_name: str):
+        """Create or reuse a Gemini vision model instance."""
+        if model_name in self.vision_model_cache:
+            return self.vision_model_cache[model_name]
+
+        if GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
+            try:
+                model = ChatGoogleGenerativeAI(
+                    model=model_name,
+                    google_api_key=GOOGLE_API_KEY,
+                    temperature=0.2,
                 )
-                response = self.vision_model.invoke([
+                self.vision_model_cache[model_name] = model
+                return model
+            except Exception as e:
+                print(f"⚠ Vision model unavailable for {model_name}: {str(e)}")
+
+        self.vision_model_cache[model_name] = None
+        return None
+
+    def _describe_with_vision(self, file_path: str, image) -> Optional[dict]:
+        """Try multiple Gemini vision models until one works."""
+        if HumanMessage is None:
+            return None
+
+        mime_type = mimetypes.guess_type(file_path)[0] or "image/png"
+        with open(file_path, "rb") as file_handle:
+            encoded_image = base64.b64encode(file_handle.read()).decode("utf-8")
+
+        prompt = (
+            "Describe this image for a knowledge base. "
+            "If it contains visible text, extract the key text first. "
+            "Then summarize the image content in 3-6 concise sentences."
+        )
+
+        for model_name in self.vision_model_candidates:
+            vision_model = self._get_vision_model(model_name)
+            if vision_model is None:
+                continue
+
+            try:
+                response = vision_model.invoke([
                     HumanMessage(content=[
                         {"type": "text", "text": prompt},
                         {
@@ -190,41 +297,11 @@ class PDFLoader:
                 if summary_text:
                     return {
                         "text": summary_text,
-                        "method": "vision",
+                        "method": f"vision:{model_name}",
                     }
             except Exception as e:
-                print(f"⚠ Vision model failed for {file_path}: {str(e)}")
-
-        if self.image_captioner is not None:
-            try:
-                caption_result = self.image_captioner(image)
-                if caption_result:
-                    if isinstance(caption_result, list):
-                        caption_text = caption_result[0].get("generated_text", "").strip()
-                    elif isinstance(caption_result, dict):
-                        caption_text = caption_result.get("generated_text", "").strip()
-                    else:
-                        caption_text = str(caption_result).strip()
-
-                    if caption_text:
-                        return {
-                            "text": f"Image summary for {os.path.basename(file_path)}: {caption_text}",
-                            "method": "local_captioning",
-                        }
-            except Exception as e:
-                print(f"⚠ Local image captioning failed for {file_path}: {str(e)}")
-
-        # Fall back to OCR only if Tesseract is actually installed.
-        if pytesseract is not None and self.tesseract_path:
-            try:
-                extracted_text = pytesseract.image_to_string(image).strip()
-                if extracted_text:
-                    return {
-                        "text": extracted_text,
-                        "method": "ocr",
-                    }
-            except Exception as e:
-                print(f"⚠ OCR failed for {file_path}: {str(e)}")
+                print(f"⚠ Vision model failed for {model_name} on {file_path}: {str(e)}")
+                self.vision_model_cache[model_name] = None
 
         return None
 
@@ -236,9 +313,9 @@ class PDFLoader:
             missing_backends.append("pytesseract")
         if not self.tesseract_path:
             missing_backends.append("tesseract_executable")
-        if self.vision_model is None:
+        if GOOGLE_API_KEY is None or ChatGoogleGenerativeAI is None:
             missing_backends.append("vision_api")
-        if self.image_captioner is None:
+        if self.enable_local_image_captioning and (torch is None or BlipProcessor is None or BlipForConditionalGeneration is None):
             missing_backends.append("local_captioner")
 
         if not missing_backends:

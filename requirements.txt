@@ -39,6 +39,7 @@ PyPDF2
 # Image Processing and OCR
 pillow
 pytesseract
+easyocr
 
 # Vector Stores
 faiss-cpu
