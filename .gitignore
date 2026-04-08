@@ -27,3 +27,4 @@ RAG/chroma_db/
 RAG/user_uploads/
 RAG/.env
 SUMMARY.md
+pdfs/
